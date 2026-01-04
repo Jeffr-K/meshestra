@@ -1,0 +1,44 @@
+@baseUrl = http://localhost:3000
+
+# Creates a new user
+# @name createUser
+POST {{baseUrl}}/users
+Content-Type: application/json
+
+{
+    "name": "Alice Wonderland",
+    "email": "alice@example.com"
+}
+
+###
+
+# Get list of users (to find the ID of the user we just created)
+GET {{baseUrl}}/users
+
+###
+
+# Get specific user by ID (Replace :id with actual ID from previous response)
+# @name getUser
+GET {{baseUrl}}/users/{{createUser.response.body.id}}
+
+###
+
+# Creates a new product
+# @name createProduct
+POST {{baseUrl}}/products
+Content-Type: application/json
+
+{
+    "name": "Magic Mushroom",
+    "price": 99.99
+}
+
+###
+
+# List products
+GET {{baseUrl}}/products
+
+###
+
+# Get specific product
+GET {{baseUrl}}/products/{{createProduct.response.body.id}}

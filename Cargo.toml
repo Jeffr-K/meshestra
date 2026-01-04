@@ -1,0 +1,61 @@
+[package]
+name = "meshestra"
+version = "0.1.0"
+edition = "2024"
+authors = ["anonymous.rs <jeff.cofos@gmail.com"]
+description = "A high-performance web framework with built-in dependency injection for Rust"
+repository = "https://github.com/Jeffr-K/meshestra"
+license = "MIT OR Apache-2.0"
+keywords = ["web", "framework", "dependency-injection", "axum", "di"]
+categories = ["web-programming::http-server"]
+
+[workspace]
+members = [
+    "examples/example-server",
+    "examples/example-worker",
+    "meshestra-batch",
+    "meshestra-cli",
+    "meshestra-gateway",
+    "meshestra-macro",
+    "meshestra-testing",
+]
+
+[dependencies]
+# Core web framework
+axum = "0.8.0"
+tokio = { version = "1", features = ["full"] }
+tower = "0.5"
+
+# DI container
+dashmap = "6.0"
+async-trait = "0.1"
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0.100"
+
+# Macros
+meshestra-macro = { path = "./meshestra-macro" }
+
+# Serialization (for JSON responses)
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# UUID support
+uuid = { version = "1.0", features = ["v4", "serde"] }
+chrono = { version = "0.4.42", features = ["serde"] }
+rayon = "1.11.0"
+num_cpus = "1.17.0"
+
+# Logging
+tracing = "0.1"
+strum = "0.27.2"
+strum_macros = "0.27.2"
+
+[dev-dependencies]
+tower-http = { version = "0.6.8", features = ["trace"] }
+tracing-subscriber = "0.3"
+
+[features]
+default = ["full"]
+full = []
