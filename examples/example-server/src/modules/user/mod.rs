@@ -1,7 +1,7 @@
 use meshestra::prelude::*;
 
 pub mod controller;
-mod domain;
+pub mod domain;
 mod repository;
 mod service;
 

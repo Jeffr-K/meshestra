@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-meshestra = { path = "../../" }
+meshestra = { path = "../../", features = ["sea-orm-db"] }
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -13,3 +13,5 @@ uuid = { version = "1.0", features = ["v4", "serde"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 async-trait = "0.1"
+sea-orm = { version = "2.0.0-rc.27", features = ["schema-sync", "entity-registry", "runtime-tokio-native-tls", "sqlx-postgres"] }
+dotenvy = "0.15"

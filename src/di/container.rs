@@ -3,6 +3,9 @@ use dashmap::DashMap;
 use std::any::{Any, TypeId};
 use std::sync::Arc;
 
+/// Type alias for the trait caster function to ensure it's cloneable and thread-safe
+type CasterFn = Arc<dyn Fn(Arc<dyn Any + Send + Sync>) -> Arc<dyn Any + Send + Sync> + Send + Sync>;
+
 /// Thread-safe dependency injection container
 ///
 /// The Container manages service instances and their dependencies.
@@ -13,14 +16,26 @@ pub struct Container {
 
     /// Trait TypeId → Implementation TypeId mapping
     /// This enables resolving Arc<dyn Trait> requests
-    /// Caster function: takes base service (Arc<dyn Any>) and returns Arc<Arc<dyn Trait>> (as Arc<dyn Any>)
-    /// Trait TypeId → Implementation TypeId mapping
     trait_mappings: DashMap<TypeId, TypeId>,
 
     /// Caster function: takes base service (Arc<dyn Any>) and returns Arc<Arc<dyn Trait>> (as Arc<dyn Any>)
-    casters: DashMap<TypeId, Box<dyn Fn(Arc<dyn Any + Send + Sync>) -> Arc<dyn Any + Send + Sync> + Send + Sync>>,
+    /// Using Arc instead of Box to make the Container cloneable.
+    casters: DashMap<TypeId, CasterFn>,
 }
 
+/// Manual implementation of Clone for Container.
+/// DashMap and Arc both use reference counting, making this a cheap operation.
+impl Clone for Container {
+    fn clone(&self) -> Self {
+        Self {
+            services: self.services.clone(),
+            trait_mappings: self.trait_mappings.clone(),
+            casters: self.casters.clone(),
+        }
+    }
+}
+
+#[derive(Clone)]
 struct ServiceEntry {
     instance: Arc<dyn Any + Send + Sync>,
     type_name: &'static str,
@@ -49,30 +64,32 @@ impl Container {
     }
 
     /// Register a trait-to-implementation mapping
-    pub fn register_trait<Trait, Impl, F>(&mut self, caster_fn: F) -> &mut Self 
-    where 
-        Trait: ?Sized + 'static + Send + Sync, 
+    pub fn register_trait<Trait, Impl, F>(&mut self, caster_fn: F) -> &mut Self
+    where
+        Trait: ?Sized + 'static + Send + Sync,
         Impl: 'static + Send + Sync,
         F: Fn(Arc<Impl>) -> Arc<Trait> + 'static + Send + Sync,
     {
         let trait_id = TypeId::of::<Trait>();
         let impl_id = TypeId::of::<Impl>();
-        
+
         self.trait_mappings.insert(trait_id, impl_id);
-        
+
         // Register caster
-        let caster = Box::new(move |instance: Arc<dyn Any + Send + Sync>| {
+        // Coerce the closure into an Arc to satisfy the Clone requirement
+        let caster: CasterFn = Arc::new(move |instance: Arc<dyn Any + Send + Sync>| {
             // 1. Downcast Arc<dyn Any> -> Arc<Impl>
-            let concrete = instance.downcast::<Impl>().expect("Failed to downcast to implementation type");
-            
+            let concrete = instance
+                .downcast::<Impl>()
+                .expect("Failed to downcast to implementation type");
+
             // 2. Coerce Arc<Impl> -> Arc<Trait> using provided generic-erased function
-            // (the function is captured)
             let trait_obj = caster_fn(concrete);
-            
+
             // 3. Wrap in Arc<Arc<Trait>> -> Arc<dyn Any>
             Arc::new(trait_obj) as Arc<dyn Any + Send + Sync>
         });
-        
+
         self.casters.insert(trait_id, caster);
         self
     }
@@ -97,15 +114,16 @@ impl Container {
                 type_name: std::any::type_name::<T>().to_string(),
             })
     }
-    
+
     /// Resolve a trait object from the container
     pub fn resolve_trait<T: ?Sized + 'static + Send + Sync>(&self) -> Result<Arc<T>> {
         let requested_type_id = TypeId::of::<T>();
-        
+
         // Must have a caster
         if let Some(caster) = self.casters.get(&requested_type_id) {
-             // Find the implementation type
-            let impl_type_id = self.trait_mappings
+            // Find the implementation type
+            let impl_type_id = self
+                .trait_mappings
                 .get(&requested_type_id)
                 .map(|v| *v)
                 .ok_or_else(|| MeshestraError::DependencyNotFound {
@@ -120,19 +138,20 @@ impl Container {
             })?;
 
             // Run caster: returns Arc<Arc<T>> (as Any)
-            let cast_result = caster(entry.instance.clone());
-            
+            let cast_result = (caster.value())(entry.instance.clone());
+
             // Downcast wrapper to Arc<Arc<T>>
             // T is ?Sized, but Arc<T> is Sized.
-            let wrapper = cast_result.downcast::<Arc<T>>().map_err(|_| {
-                MeshestraError::DowncastFailed {
-                    type_name: "Trait Wrapper Downcast Failed".to_string(),
-                }
-            })?;
-            
+            let wrapper =
+                cast_result
+                    .downcast::<Arc<T>>()
+                    .map_err(|_| MeshestraError::DowncastFailed {
+                        type_name: "Trait Wrapper Downcast Failed".to_string(),
+                    })?;
+
             return Ok(wrapper.as_ref().clone());
         }
-        
+
         Err(MeshestraError::DependencyNotFound {
             type_name: "Unknown Trait".to_string(),
         })
@@ -206,5 +225,15 @@ mod tests {
 
         container.register(TestService { value: 42 });
         assert!(container.contains::<TestService>());
+    }
+
+    #[test]
+    fn test_container_clone() {
+        let mut container = Container::new();
+        container.register(TestService { value: 100 });
+
+        let cloned_container = container.clone();
+        let service = cloned_container.resolve::<TestService>().unwrap();
+        assert_eq!(service.value, 100);
     }
 }

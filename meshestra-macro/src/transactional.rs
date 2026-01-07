@@ -102,28 +102,51 @@ pub fn transactional_attribute(attr: TokenStream, item: TokenStream) -> TokenStr
 
     let new_block = quote! {
         {
-            use ::meshestra::transactional::TransactionManager;
+            use ::meshestra::transactional::{get_current_transaction, ACTIVE_TRANSACTION, Propagation, Transaction, TransactionManager};
+            use ::meshestra::MeshestraError;
+            use ::std::sync::Arc;
+            use ::tokio::sync::Mutex;
 
-            let mut tx = self.transaction_manager
-                .begin(#options_expr)
-                .await
-                .map_err(|e| ::meshestra::MeshestraError::Internal(e.to_string()))?;
+            let options = #options_expr;
 
-            let result = (async move { #block }).await;
+            // This logic handles Propagation::Required
+            if options.propagation == Propagation::Required {
+                if let Some(_existing_tx) = get_current_transaction() {
+                    // A transaction is already active. Just run the function body.
+                    // The outer transactional scope will handle commit/rollback.
+                    (async move { #block }).await
+                } else {
+                    // No active transaction. We need to start one.
+                    let tx_manager = &self.transaction_manager;
+                    let tx_box = tx_manager.begin(options).await.map_err(|e| MeshestraError::Internal(e.to_string()))?;
 
-            match &result {
-                Ok(_) => {
-                    if let Err(e) = tx.commit().await {
-                         return Err(::meshestra::MeshestraError::Internal(e.to_string()).into());
+                    let tx_arc = Arc::new(Mutex::new(tx_box));
+
+                    // Set the transaction in the task local for the scope of the function
+                    let result = ACTIVE_TRANSACTION.scope(Some(tx_arc.clone()), async {
+                        (async move { #block }).await
+                    }).await;
+
+                    // After the function runs, commit or rollback.
+                    let mut guard = tx_arc.lock().await;
+                    match &result {
+                        Ok(_) => {
+                            if let Err(e) = guard.commit().await {
+                                 return Err(MeshestraError::Internal(format!("Failed to commit transaction: {}", e)).into());
+                            }
+                        },
+                        Err(_) => {
+                            if let Err(e) = guard.rollback().await {
+                                // Log rollback failure? For now, the original error is more important.
+                            }
+                        }
                     }
-                },
-                Err(_) => {
-                    if let Err(e) = tx.rollback().await {
-                    }
+
+                    result
                 }
+            } else {
+                 panic!("Only Propagation::Required is currently supported by #[transactional]");
             }
-
-            result
         }
     };
 

@@ -1,11 +1,11 @@
 use meshestra::prelude::*;
 
 pub mod controller;
-mod model;
-mod repository;
-mod service;
+pub mod model;
+pub mod product_entity;
+pub mod repository;
+pub mod service;
 
-// pub use model::{Product, CreateProductRequest};
 pub use controller::ProductController;
 pub use repository::{ProductRepository, ProductRepositoryImpl};
 pub use service::ProductService;

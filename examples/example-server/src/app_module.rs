@@ -1,4 +1,4 @@
-use crate::infrastructure::transaction::MockTransactionManager;
+use crate::infrastructure::transaction::SeaOrmTransactionManager;
 use crate::modules::product::{ProductModule, ProductRepository, ProductRepositoryImpl};
 use crate::modules::user::{UserModule, UserRepository, UserRepositoryImpl};
 use meshestra::prelude::*;
@@ -11,9 +11,10 @@ use meshestra::transactional::TransactionManager;
 #[module(
     imports = [UserModule, ProductModule],
     bindings = [
-        (dyn TransactionManager => MockTransactionManager),
+        (dyn TransactionManager => SeaOrmTransactionManager),
         (dyn UserRepository => UserRepositoryImpl),
         (dyn ProductRepository => ProductRepositoryImpl),
+        (dyn TransactionManager => SeaOrmTransactionManager),
     ],
 )]
 pub struct AppModule;

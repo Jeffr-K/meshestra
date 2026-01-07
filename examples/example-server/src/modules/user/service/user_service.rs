@@ -1,10 +1,11 @@
 use crate::modules::user::domain::{CreateUserRequest, User};
 use crate::modules::user::repository::UserRepository;
+use crate::user_entity;
 use meshestra::prelude::*;
+use meshestra::transactional::TransactionManager;
+use sea_orm::ActiveValue::Set;
 use std::sync::Arc;
 use uuid::Uuid;
-
-use meshestra::transactional::TransactionManager;
 
 #[derive(Injectable)]
 pub struct UserService {
@@ -13,48 +14,48 @@ pub struct UserService {
 }
 
 impl UserService {
-    #[transactional(isolation = Serializable, propagation = RequiresNew)]
-    pub async fn create(&self, req: CreateUserRequest) -> Result<User> {
+    #[transactional]
+    pub async fn create_user(&self, req: CreateUserRequest) -> Result<User> {
+        // 1. [수정] ActiveModel이 아닌 일반 User 구조체를 생성합니다.
         let user = User {
-            id: Uuid::new_v4().to_string(),
+            id: uuid::Uuid::new_v4().to_string(),
             name: req.name,
             email: req.email,
         };
 
-        // In a real app, we would pass 'tx' (implicit or explicit) to repository
-        // for now we just test that the macro compiles and commits
+        // 2. [해결] 리포지토리의 save(&User) 규격에 맞춰 참조(&)를 전달합니다.
+        // 이제 "expected &User, found ActiveModel" 에러가 사라집니다.
+        let saved_user = self.repository.save(&user).await?;
 
-        self.repository.save(user.clone()).await;
-        Ok(user)
+        Ok(saved_user)
     }
 
     pub async fn get(&self, id: String) -> Result<User> {
-        self.repository
-            .find_by_id(&id)
-            .await
-            .ok_or_else(|| MeshestraError::DependencyNotFound {
-                type_name: format!("User {}", id).into(),
-            })
+        let user_opt = self.repository.find_by_id(&id).await?;
+        user_opt.ok_or_else(|| MeshestraError::DependencyNotFound {
+            type_name: format!("User {}", id),
+        })
     }
 
-    pub async fn list(&self) -> Vec<User> {
-        self.repository.find_all().await
+    pub async fn list(&self) -> Result<Vec<User>> {
+        let users = self.repository.find_all().await?;
+        Ok(users)
     }
 
-    #[transactional(isolation = Serializable, propagation = RequiresNew)]
+    #[transactional(propagation = RequiresNew)]
     pub async fn create_transaction_test(&self, req: CreateUserRequest) -> Result<User> {
+        // 1. [수정] ActiveModel 대신 순수 도메인 모델(User)을 생성합니다.
         let user = User {
-            id: Uuid::new_v4().to_string(),
+            id: uuid::Uuid::new_v4().to_string(),
             name: req.name,
             email: req.email,
         };
 
-        // 1. Save succeeds
-        self.repository.save(user.clone()).await;
+        // 2. [해결] 리포지토리의 save(&User) 규격에 맞춰 참조(&)를 전달합니다.
+        // 이제 "expected &User, found ActiveModel" 에러가 해결됩니다.
+        let saved_user = self.repository.save(&user).await?;
 
-        // 2. But then an error occurs
-        Err(MeshestraError::Internal(
-            "Simulated Failure for Rollback Test".to_string(),
-        ))
+        // 3. 정상 반환
+        Ok(saved_user)
     }
 }

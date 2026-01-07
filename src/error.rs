@@ -23,6 +23,14 @@ pub enum MeshestraError {
     Internal(String),
 }
 
+#[cfg(feature = "sea-orm-db")]
+impl From<sea_orm::DbErr> for MeshestraError {
+    fn from(err: sea_orm::DbErr) -> Self {
+        // A real application would have more sophisticated error mapping
+        MeshestraError::Internal(format!("Database error: {}", err))
+    }
+}
+
 impl axum::response::IntoResponse for MeshestraError {
     fn into_response(self) -> axum::response::Response {
         let (status, message) = match &self {

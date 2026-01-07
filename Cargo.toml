@@ -16,7 +16,7 @@ members = [
     "meshestra-batch",
     "meshestra-cli",
     "meshestra-gateway",
-    "meshestra-macro",
+    "meshestra-macro", "meshestra-persistence",
     "meshestra-testing",
 ]
 
@@ -52,6 +52,9 @@ tracing = "0.1"
 strum = "0.27.2"
 strum_macros = "0.27.2"
 
+# Optional dependencies
+sea-orm = { version = "2.0.0-rc.27", optional = true, features = ["schema-sync", "entity-registry"] }
+
 [dev-dependencies]
 tower-http = { version = "0.6.8", features = ["trace"] }
 tracing-subscriber = "0.3"
@@ -59,3 +62,4 @@ tracing-subscriber = "0.3"
 [features]
 default = ["full"]
 full = []
+sea-orm-db = ["dep:sea-orm"]

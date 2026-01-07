@@ -239,12 +239,40 @@ pub fn host_param(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item
 }
 
-/// Attribute macro for defining aspects on a controller or method
+/// Attribute macro for applying Cross-Cutting Concerns (Aspects) to a controller or specific methods.
+///
+/// # Description
+/// Aspects allow you to inject logic (Before/After/On Error) around your handler execution.
+/// You can apply this to an entire `struct` (controller) to affect all its routes,
+/// or to individual `async fn` methods for fine-grained control.
+///
+/// # Requirements
+/// The type passed to the attribute (e.g., `LoggingAspect`) must:
+/// 1. Implement the `Aspect` trait.
+/// 2. Be registered as a `provider` in a `Module`.
+/// 3. Be `Injectable` or available in the DI container.
+///
+/// # Execution Order
+/// 1. `Aspect::before`: Runs before the handler. Can abort execution by returning `Err`.
+/// 2. `Handler`: Your actual controller method.
+/// 3. `Aspect::after`: Runs after successful handler execution.
+/// 4. `Aspect::on_error`: Runs if the handler or interceptors fail.
 ///
 /// # Example
-/// ```
-/// #[aspect(LoggingAspect)]
+/// ```rust
+/// // Apply to all methods in the controller
+/// #[controller(path = "/users")]
+/// #[aspect(AuthAspect)]
 /// pub struct UserController { ... }
+///
+/// impl UserController {
+///     // Apply to a specific method (runs after controller-level aspects)
+///     #[get("/:id")]
+///     #[aspect(LoggingAspect)]
+///     async fn get_user(&self, #[param] id: String) -> ApiResponse<User> {
+///         // ...
+///     }
+/// }
 /// ```
 #[proc_macro_attribute]
 pub fn aspect(attr: TokenStream, item: TokenStream) -> TokenStream {
