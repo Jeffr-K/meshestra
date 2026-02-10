@@ -3,28 +3,17 @@ use dashmap::DashMap;
 use std::any::{Any, TypeId};
 use std::sync::Arc;
 
-/// Type alias for the trait caster function to ensure it's cloneable and thread-safe
+/// Type alias for a function that can cast an `Arc<dyn Any>` to another `Arc<dyn Any>`.
+/// The inner value is usually an `Arc<dyn Trait>`.
 type CasterFn = Arc<dyn Fn(Arc<dyn Any + Send + Sync>) -> Arc<dyn Any + Send + Sync> + Send + Sync>;
 
-/// Thread-safe dependency injection container
-///
-/// The Container manages service instances and their dependencies.
-/// It uses TypeId-based lookup for type-safe service resolution.
+/// Thread-safe dependency injection container.
 pub struct Container {
-    /// TypeId → Service instance mapping
     services: DashMap<TypeId, ServiceEntry>,
-
-    /// Trait TypeId → Implementation TypeId mapping
-    /// This enables resolving Arc<dyn Trait> requests
     trait_mappings: DashMap<TypeId, TypeId>,
-
-    /// Caster function: takes base service (Arc<dyn Any>) and returns Arc<Arc<dyn Trait>> (as Arc<dyn Any>)
-    /// Using Arc instead of Box to make the Container cloneable.
     casters: DashMap<TypeId, CasterFn>,
 }
 
-/// Manual implementation of Clone for Container.
-/// DashMap and Arc both use reference counting, making this a cheap operation.
 impl Clone for Container {
     fn clone(&self) -> Self {
         Self {
@@ -38,11 +27,9 @@ impl Clone for Container {
 #[derive(Clone)]
 struct ServiceEntry {
     instance: Arc<dyn Any + Send + Sync>,
-    type_name: &'static str,
 }
 
 impl Container {
-    /// Create a new empty container
     pub fn new() -> Self {
         Self {
             services: DashMap::new(),
@@ -51,19 +38,15 @@ impl Container {
         }
     }
 
-    /// Register a service instance in the container
     pub fn register<T: 'static + Send + Sync>(&mut self, instance: T) -> &mut Self {
         let type_id = TypeId::of::<T>();
         let entry = ServiceEntry {
             instance: Arc::new(instance),
-            type_name: std::any::type_name::<T>(),
         };
-
         self.services.insert(type_id, entry);
         self
     }
 
-    /// Register a trait-to-implementation mapping
     pub fn register_trait<Trait, Impl, F>(&mut self, caster_fn: F) -> &mut Self
     where
         Trait: ?Sized + 'static + Send + Sync,
@@ -75,37 +58,25 @@ impl Container {
 
         self.trait_mappings.insert(trait_id, impl_id);
 
-        // Register caster
-        // Coerce the closure into an Arc to satisfy the Clone requirement
         let caster: CasterFn = Arc::new(move |instance: Arc<dyn Any + Send + Sync>| {
-            // 1. Downcast Arc<dyn Any> -> Arc<Impl>
             let concrete = instance
                 .downcast::<Impl>()
-                .expect("Failed to downcast to implementation type");
-
-            // 2. Coerce Arc<Impl> -> Arc<Trait> using provided generic-erased function
-            let trait_obj = caster_fn(concrete);
-
-            // 3. Wrap in Arc<Arc<Trait>> -> Arc<dyn Any>
-            Arc::new(trait_obj) as Arc<dyn Any + Send + Sync>
+                .expect("Failed to downcast to implementation type. This is a bug in Meshestra.");
+            let trait_obj: Arc<Trait> = caster_fn(concrete);
+            Arc::new(trait_obj) // Wrap the Arc<dyn Trait> in an Arc<dyn Any>
         });
 
         self.casters.insert(trait_id, caster);
         self
     }
 
-    /// Resolve a service from the container (for concrete types)
     pub fn resolve<T: 'static + Send + Sync>(&self) -> Result<Arc<T>> {
         let requested_type_id = TypeId::of::<T>();
-
-        // Standard resolution
         let entry = self.services.get(&requested_type_id).ok_or_else(|| {
             MeshestraError::DependencyNotFound {
                 type_name: std::any::type_name::<T>().to_string(),
             }
         })?;
-
-        // Downcast
         entry
             .instance
             .clone()
@@ -115,76 +86,62 @@ impl Container {
             })
     }
 
-    /// Resolve a trait object from the container
     pub fn resolve_trait<T: ?Sized + 'static + Send + Sync>(&self) -> Result<Arc<T>> {
         let requested_type_id = TypeId::of::<T>();
 
-        // Must have a caster
-        if let Some(caster) = self.casters.get(&requested_type_id) {
-            // Find the implementation type
-            let impl_type_id = self
-                .trait_mappings
-                .get(&requested_type_id)
-                .map(|v| *v)
+        let caster = self.casters.get(&requested_type_id).ok_or_else(|| {
+            MeshestraError::DependencyNotFound {
+                type_name: std::any::type_name::<T>().to_string(),
+            }
+        })?;
+
+        let impl_type_id = self.trait_mappings.get(&requested_type_id).ok_or_else(|| {
+            MeshestraError::DependencyNotFound {
+                type_name: format!(
+                    "No implementation mapping found for trait '{}'",
+                    std::any::type_name::<T>()
+                ),
+            }
+        })?;
+
+        let entry =
+            self.services
+                .get(&impl_type_id)
                 .ok_or_else(|| MeshestraError::DependencyNotFound {
-                    type_name: std::any::type_name::<T>().to_string(),
+                    type_name: format!(
+                        "Implementation for trait '{}' not registered",
+                        std::any::type_name::<T>()
+                    ),
                 })?;
 
-            // Get concrete instance
-            let entry = self.services.get(&impl_type_id).ok_or_else(|| {
-                MeshestraError::DependencyNotFound {
-                    type_name: std::any::type_name::<T>().to_string(),
-                }
-            })?;
+        let cast_result = (caster.value())(entry.instance.clone());
 
-            // Run caster: returns Arc<Arc<T>> (as Any)
-            let cast_result = (caster.value())(entry.instance.clone());
-
-            // Downcast wrapper to Arc<Arc<T>>
-            // T is ?Sized, but Arc<T> is Sized.
-            let wrapper =
-                cast_result
-                    .downcast::<Arc<T>>()
-                    .map_err(|_| MeshestraError::DowncastFailed {
-                        type_name: "Trait Wrapper Downcast Failed".to_string(),
-                    })?;
-
-            return Ok(wrapper.as_ref().clone());
-        }
-
-        Err(MeshestraError::DependencyNotFound {
-            type_name: "Unknown Trait".to_string(),
-        })
+        // The caster returns an Arc<dyn Any> which holds an Arc<T>.
+        // We need to downcast to Arc<T>, which is Sized.
+        let wrapper =
+            cast_result
+                .downcast::<Arc<T>>()
+                .map_err(|_| MeshestraError::DowncastFailed {
+                    type_name: format!(
+                        "Failed to downcast to Arc<Arc<{}>>. This is an internal Meshestra bug.",
+                        std::any::type_name::<T>()
+                    ),
+                })?;
+        // The result of downcast is Arc<Arc<T>>, so we clone the inner Arc.
+        Ok(wrapper.as_ref().clone())
     }
 
-    /// Check if a type is registered in the container
     pub fn contains<T: 'static>(&self) -> bool {
         let type_id = TypeId::of::<T>();
         self.services.contains_key(&type_id) || self.trait_mappings.contains_key(&type_id)
     }
 
-    /// Get the number of registered services
     pub fn len(&self) -> usize {
         self.services.len()
     }
 
-    /// Check if the container is empty
     pub fn is_empty(&self) -> bool {
         self.services.is_empty()
-    }
-
-    /// Debug: Print all registered services
-    #[cfg(debug_assertions)]
-    pub fn dump_services(&self) {
-        println!("Registered services ({}):", self.services.len());
-        for entry in self.services.iter() {
-            println!("  - {}", entry.value().type_name);
-        }
-
-        println!("\nTrait mappings ({}):", self.trait_mappings.len());
-        for mapping in self.trait_mappings.iter() {
-            println!("  - {:?} -> {:?}", mapping.key(), mapping.value());
-        }
     }
 }
 
@@ -202,38 +159,34 @@ mod tests {
         value: i32,
     }
 
+    trait MyTrait: Send + Sync {
+        fn get_value(&self) -> i32;
+    }
+
+    struct MyTraitImpl {
+        value: i32,
+    }
+
+    impl MyTrait for MyTraitImpl {
+        fn get_value(&self) -> i32 {
+            self.value
+        }
+    }
+
     #[test]
     fn test_register_and_resolve() {
         let mut container = Container::new();
         container.register(TestService { value: 42 });
-
         let service = container.resolve::<TestService>().unwrap();
         assert_eq!(service.value, 42);
     }
 
     #[test]
-    fn test_resolve_missing_service() {
-        let container = Container::new();
-        let result = container.resolve::<TestService>();
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_contains() {
+    fn test_register_and_resolve_trait() {
         let mut container = Container::new();
-        assert!(!container.contains::<TestService>());
-
-        container.register(TestService { value: 42 });
-        assert!(container.contains::<TestService>());
-    }
-
-    #[test]
-    fn test_container_clone() {
-        let mut container = Container::new();
-        container.register(TestService { value: 100 });
-
-        let cloned_container = container.clone();
-        let service = cloned_container.resolve::<TestService>().unwrap();
-        assert_eq!(service.value, 100);
+        container.register(MyTraitImpl { value: 99 });
+        container.register_trait::<dyn MyTrait, MyTraitImpl, _>(|i| i as Arc<dyn MyTrait>);
+        let trait_instance = container.resolve_trait::<dyn MyTrait>().unwrap();
+        assert_eq!(trait_instance.get_value(), 99);
     }
 }

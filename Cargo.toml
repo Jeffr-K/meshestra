@@ -12,7 +12,7 @@ categories = ["web-programming::http-server"]
 [workspace]
 members = [
     "examples/example-server",
-    "examples/example-worker",
+    "examples/example-worker", "learn-rust", "meshestra-aspect",
     "meshestra-batch",
     "meshestra-cli",
     "meshestra-gateway",

@@ -17,7 +17,9 @@ pub type AspectResult = Result<(), MeshestraError>;
 /// ### Example
 ///
 /// ```rust
-/// use crate::prelude::*;
+/// use meshestra::prelude::*;
+/// use async_trait::async_trait;
+/// use axum::{body::Body, http::Request};
 ///
 /// pub struct AuthAspect;
 ///

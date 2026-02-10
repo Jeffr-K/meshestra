@@ -7,10 +7,17 @@ use crate::error::Result;
 ///
 /// # Example
 /// ```
-/// use meshestra::Injectable;
+/// use meshestra::Injectable; // The trait
+/// use meshestra_macro::Injectable; // The derive macro
+/// use std::sync::Arc;
 ///
+/// // 1. Define a trait
+/// trait UserRepository: Send + Sync {}
+///
+/// // 2. Derive Injectable on a struct
 /// #[derive(Injectable)]
 /// pub struct UserService {
+///     // This field will be resolved from the container
 ///     repository: Arc<dyn UserRepository>,
 /// }
 /// ```

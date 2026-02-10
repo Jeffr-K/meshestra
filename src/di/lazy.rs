@@ -1,58 +1,77 @@
-use std::cell::UnsafeCell;
-use std::sync::Once;
+use crate::di::Container;
+use std::ops::Deref;
+use std::sync::{Arc, Mutex, Once, PoisonError};
 
-/// A thread-safe lazy initialization wrapper
-pub struct Lazy<T, F = Box<dyn FnOnce() -> T + Send + Sync>> {
-    init: Once,
-    data: UnsafeCell<Option<T>>,
-    factory: UnsafeCell<Option<F>>,
+/// A wrapper for lazy-initialized services to handle circular dependencies.
+///
+/// `Lazy<T>` holds a reference to the DI `Container` and resolves the actual
+/// service `T` only when it's first accessed. This allows breaking dependency
+/// cycles during container setup.
+///
+/// # Panics
+///
+/// It will panic at runtime if the requested service `T` is not registered in the
+/// container when the `Lazy<T>` is first dereferenced.
+pub struct Lazy<T: 'static + Send + Sync> {
+    container: Container,
+    instance: Mutex<Option<Arc<T>>>,
+    once: Once,
 }
 
-// Safety: Lazy is Sync if T is Sync and F is Send (because F moves into T construct).
-unsafe impl<T: Sync, F: Send> Sync for Lazy<T, F> {}
-unsafe impl<T: Send, F: Send> Send for Lazy<T, F> {}
-
-impl<T, F> Lazy<T, F>
-where
-    F: FnOnce() -> T,
-{
-    /// Create a new lazy value
-    pub const fn new(f: F) -> Self {
+impl<T: 'static + Send + Sync> Lazy<T> {
+    /// Creates a new `Lazy<T>`.
+    ///
+    /// This is typically called by the `#[derive(Injectable)]` macro.
+    pub fn new(container: &Container) -> Self {
         Self {
-            init: Once::new(),
-            data: UnsafeCell::new(None),
-            factory: UnsafeCell::new(Some(f)),
+            container: container.clone(),
+            instance: Mutex::new(None),
+            once: Once::new(),
         }
     }
 
-    /// Get the value, initializing it if necessary
-    pub fn get(&self) -> &T {
-        self.init.call_once(|| {
-            // SAFETY: this block is executed only once.
-            // We can safely read/write the UnsafeCells.
-            unsafe {
-                let factory_ptr = self.factory.get();
-                if let Some(f) = (*factory_ptr).take() {
-                    let value = f();
-                    *self.data.get() = Some(value);
-                }
-            }
+    /// Internal method to initialize the service.
+    fn init(&self) {
+        self.once.call_once(|| {
+            let resolved = self.container.resolve::<T>().unwrap_or_else(|e| {
+                panic!(
+                    "Failed to lazily resolve dependency '{}': {}",
+                    std::any::type_name::<T>(),
+                    e
+                )
+            });
+            *self.instance.lock().unwrap_or_else(PoisonError::into_inner) = Some(resolved);
         });
-
-        // SAFETY: self.init ensures data is initialized and visible.
-        unsafe {
-            (*self.data.get()).as_ref().unwrap()
-        }
     }
 }
 
-impl<T, F> std::ops::Deref for Lazy<T, F>
-where
-    F: FnOnce() -> T,
-{
+impl<T: 'static + Send + Sync> Deref for Lazy<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        self.get()
+        // Ensure the instance is initialized.
+        self.init();
+
+        // The following logic is a bit tricky to avoid holding the lock for too long.
+        // We get the instance, which is an Arc. We can then safely return a reference
+        // to the value inside the Arc without holding the lock.
+        // `MutexGuard` will be dropped, releasing the lock.
+        let guard = self.instance.lock().unwrap_or_else(PoisonError::into_inner);
+
+        // We use `Arc::as_ptr` and unsafe code to extend the lifetime of the reference.
+        // This is safe because the `Arc` is stored within the `Lazy` struct and will not be
+        // dropped while the `Lazy` struct itself is alive. The reference returned by `deref`
+        // cannot outlive the `Lazy` struct.
+        unsafe { &*Arc::as_ptr(guard.as_ref().unwrap()) }
+    }
+}
+
+impl<T: 'static + Send + Sync> Clone for Lazy<T> {
+    fn clone(&self) -> Self {
+        Self {
+            container: self.container.clone(),
+            instance: Mutex::new(self.instance.lock().unwrap().clone()),
+            once: Once::new(), // Each clone gets its own Once to handle initialization locally
+        }
     }
 }
