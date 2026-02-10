@@ -11,7 +11,9 @@ use serde::Serialize;
 ///
 /// # Example
 /// ```
-/// use your_crate::controller::{ApiResponse, StatusCode};
+/// use meshestra::common::response::ApiResponse;
+/// use meshestra::common::status_code::StatusCode;
+/// use serde::Serialize;
 ///
 /// #[derive(Serialize)]
 /// struct User {
@@ -20,11 +22,11 @@ use serde::Serialize;
 /// }
 ///
 /// async fn get_user(id: String) -> ApiResponse<User> {
-///     let user_result: Result<User, String> = service::find_user(id).await;
-///
-///     match user_result {
-///         Ok(user) => ApiResponse::success(user),
-///         Err(_) => ApiResponse::error(StatusCode::NotFound, "User not found"),
+///     if id == "1" {
+///         let user = User { id: "1".to_string(), name: "Test User".to_string() };
+///         ApiResponse::success(user)
+///     } else {
+///         ApiResponse::error(StatusCode::NotFound, "User not found")
 ///     }
 /// }
 /// ```
@@ -68,8 +70,11 @@ impl<T: Serialize> ApiResponse<T> {
     ///
     /// # Example
     /// ```
+    /// use meshestra::common::response::ApiResponse;
+    /// use meshestra::common::status_code::StatusCode;
+    ///
     /// // Returns a 404 response with code: "NotFound"
-    /// ApiResponse::error(StatusCode::NotFound, "Resource missing")
+    /// let response: ApiResponse<()> = ApiResponse::error(StatusCode::NotFound, "Resource missing");
     /// ```
     pub fn error(status: crate::common::StatusCode, message: impl Into<String>) -> ApiResponse<T> {
         ApiResponse {

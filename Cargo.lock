@@ -1145,6 +1145,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "learn-rust"
+version = "0.1.0"
+
+[[package]]
 name = "libc"
 version = "0.2.179"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1251,6 +1255,10 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
 ]
+
+[[package]]
+name = "meshestra-aspect"
+version = "0.1.0"
 
 [[package]]
 name = "meshestra-batch"

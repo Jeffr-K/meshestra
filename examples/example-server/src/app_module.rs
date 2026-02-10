@@ -16,5 +16,8 @@ use meshestra::transactional::TransactionManager;
         (dyn ProductRepository => ProductRepositoryImpl),
         (dyn TransactionManager => SeaOrmTransactionManager),
     ],
+    ports = [
+        PersistenceModule::with_adapter(config)
+    ]
 )]
 pub struct AppModule;

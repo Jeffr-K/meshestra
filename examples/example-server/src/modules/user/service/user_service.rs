@@ -1,15 +1,12 @@
 use crate::modules::user::domain::{CreateUserRequest, User};
 use crate::modules::user::repository::UserRepository;
-use crate::user_entity;
 use meshestra::prelude::*;
 use meshestra::transactional::TransactionManager;
-use sea_orm::ActiveValue::Set;
 use std::sync::Arc;
-use uuid::Uuid;
 
 #[derive(Injectable)]
 pub struct UserService {
-    repository: Arc<dyn UserRepository>,
+    repository: Arc<dyn UserRepository>, // TODO: 여기가 Inject 가 안되는 이유를 설명해봐
     transaction_manager: Arc<dyn TransactionManager>,
 }
 
